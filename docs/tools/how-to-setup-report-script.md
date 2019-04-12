@@ -1,12 +1,11 @@
-# How to setup report script
+# OpenPAI Report Script Sample Implementation
+After deploy OpenPAI in your organization as a running cluster, OpenPAI cluster admins need to monitor the usage of the cluster, gather and track information like resource utilization, VC usage distribution, Job counts and status, etc. These set of information can not only improve the operating of the running cluster, but also help OpenPAI advancing the system in the end.
 
-Many OpenPai cluster admins are interested in how is cluster usage and performance, who used the most/least resources, etc. Developers of OpenPai system are interested in what causes job failure, how to design and implment a system that can prevent such failure and avoid wasting cluster resources.
+To help Admins jump start fast, starting from 2019 April release, we provided a report script sample implementation. This document will provide information about how to deploy and use this script to generate report. Administrators can reference the sample implementation and customize their own report scripts based on their needs. For practices or codes that you think might be common to share, please don't hesitate to contribute back to OpenPAI community.
 
-But since not everyone is interested in this report, we do not maintain such a service, and merely provide a script for admins who interested in the report to execute. This document will provide informations about what the script will report, and how to maintain and query the result.
+## About the sample script
 
-## What the script will report
-
-The reports will be 4 csv files `vc.csv`, `job.csv`, `alert.csv` and `raw_job.csv`.
+The sample script will generate 4 reports which includes 4 csv files `vc.csv`, `job.csv`, `alert.csv` and `raw_job.csv`.
 
 ### vc.csv
 
