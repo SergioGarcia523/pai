@@ -18,9 +18,13 @@
 
 // module dependencies
 const async = require('async');
+const fs = require('fs');
+const path = require('path');
 const unirest = require('unirest');
+const _ = require('lodash');
 const mustache = require('mustache');
 const keygen = require('ssh-keygen');
+const yaml = require('js-yaml');
 const launcherConfig = require('../config/launcher');
 const userModel = require('./user');
 const yarnContainerScriptTemplate = require('../templates/yarnContainerScript');
@@ -30,6 +34,12 @@ const logger = require('../config/logger');
 const Hdfs = require('../util/hdfs');
 const azureEnv = require('../config/azure');
 const paiConfig = require('../config/paiConfig');
+
+const exitInfoList = yaml.safeLoad(fs.readFileSync(path.resolve(__dirname, '../../exitInfo.yaml')));
+const exitInfoMap = {};
+exitInfoList.forEach((val) => {
+  exitInfoMap[val.code] = val;
+});
 
 class Job {
   constructor(name, namespace, next) {
@@ -359,6 +369,44 @@ class Job {
     );
   }
 
+  generateExitInfo(code) {
+    if (!_.isNil(code)) {
+      if (!_.isNil(exitInfoMap[code])) {
+        return exitInfoMap[code];
+      } else {
+        if (code > 0) {
+          return {
+            code,
+            phrase: 'PCR Exit Abnormally',
+            issuer: 'Runtime',
+            causer: 'PlatormSW',
+            type: 'PlatormFailure',
+            stage: 'Run',
+            behavior: 'Unknown',
+            reaction: 'RetryToMax',
+            reason: 'PCR Exit Abnormally. It may have bug.',
+            solution: 'Contact Dev to fix this bug',
+          };
+        } else {
+          return {
+            code,
+            phrase: 'FL Unrecognized YARN Container ExitCode',
+            issuer: 'YARN',
+            causer: 'Unknown',
+            type: 'Unknown',
+            stage: 'Run',
+            behavior: 'Unknown',
+            reaction: 'RetryToMax',
+            reason: 'PCR Exit Abnormally. It may have bug.',
+            solution: 'Contact Dev to recognize this ExitCode',
+          };
+        }
+      }
+    } else {
+      return null;
+    }
+  }
+
   generateJobDetail(framework) {
     let jobDetail = {
       'jobStatus': {},
@@ -396,6 +444,7 @@ class Job {
         appExitCode: frameworkStatus.applicationExitCode,
         appExitDiagnostics: frameworkStatus.applicationExitDiagnostics,
         appExitType: frameworkStatus.applicationExitType,
+        exitInfo: this.generateExitInfo(frameworkStatus.applicationExitCode),
       };
     }
     const frameworkRequest = framework.aggregatedFrameworkRequest.frameworkRequest;
