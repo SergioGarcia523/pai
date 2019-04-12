@@ -443,7 +443,7 @@ class Job {
         appExitCode: frameworkStatus.applicationExitCode,
         appExitDiagnostics: frameworkStatus.applicationExitDiagnostics,
         appExitType: frameworkStatus.applicationExitType,
-        exitInfo: this.generateExitInfo(frameworkStatus.applicationExitCode),
+        appStaticExitInfo: this.generateExitInfo(frameworkStatus.applicationExitCode),
       };
     }
     const frameworkRequest = framework.aggregatedFrameworkRequest.frameworkRequest;
