@@ -397,7 +397,6 @@ class Job {
             stage: 'Run',
             behavior: 'Unknown',
             reaction: 'RetryToMax',
-            reason: 'PCR Exit Abnormally. It may have bug.',
             solution: 'Contact Dev to recognize this ExitCode',
           };
         }
