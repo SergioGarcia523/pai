@@ -21,8 +21,8 @@ import com.microsoft.frameworklauncher.common.GlobalConstants;
 import com.microsoft.frameworklauncher.common.definition.FrameworkStateDefinition;
 import com.microsoft.frameworklauncher.common.exceptions.AggregateException;
 import com.microsoft.frameworklauncher.common.exceptions.NonTransientException;
-import com.microsoft.frameworklauncher.common.exit.ExitDiagnostics;
-import com.microsoft.frameworklauncher.common.exit.ExitStatusKey;
+import com.microsoft.frameworklauncher.common.exit.AMDiagnostics;
+import com.microsoft.frameworklauncher.common.exit.FrameworkExitCode;
 import com.microsoft.frameworklauncher.common.exts.CommonExts;
 import com.microsoft.frameworklauncher.common.exts.HadoopExts;
 import com.microsoft.frameworklauncher.common.log.ChangeAwareLogger;
@@ -82,7 +82,7 @@ public class Service extends AbstractService {
   private StatusManager statusManager;
   private RequestManager requestManager;
   private RMResyncHandler rmResyncHandler;
-  private DiagnosticsRetrieveHandler diagnosticsRetrieveHandler;
+  private AMDiagnosticsRetriever amDiagnosticsRetriever;
 
 
   /**
@@ -107,7 +107,7 @@ public class Service extends AbstractService {
           "NonTransientException occurred in %1$s. %1$s will be stopped.",
           serviceName);
 
-      stop(new StopStatus(ExitStatusKey.LAUNCHER_INTERNAL_NON_TRANSIENT_ERROR.toInt(), true, null, e));
+      stop(new StopStatus(GlobalConstants.EXIT_CODE_LAUNCHER_NON_TRANSIENT_FAILED, true, null, e));
       return false;
     } else {
       LOGGER.logError(e,
@@ -115,7 +115,7 @@ public class Service extends AbstractService {
           serviceName);
 
       // TODO: Only Restart Service instead of exit whole process and Restart by external system.
-      stop(new StopStatus(ExitStatusKey.LAUNCHER_INTERNAL_UNKNOWN_ERROR.toInt(), false, null, e));
+      stop(new StopStatus(GlobalConstants.EXIT_CODE_LAUNCHER_UNKNOWN_FAILED, false, null, e));
       return true;
     }
   }
@@ -140,7 +140,7 @@ public class Service extends AbstractService {
 
     // Initialize other components
     rmResyncHandler = new RMResyncHandler(this, conf, yarnClient);
-    diagnosticsRetrieveHandler = new DiagnosticsRetrieveHandler(this, conf, yarnClient);
+    amDiagnosticsRetriever = new AMDiagnosticsRetriever(this, conf, yarnClient);
 
     // Initialize External Service
     webServer = new WebServer(conf, zkStore);
@@ -456,28 +456,38 @@ public class Service extends AbstractService {
     LOGGER.logInfo("All the previous APPLICATION_COMPLETED Frameworks have been driven");
   }
 
-  private void completeApplication(FrameworkStatus frameworkStatus, int exitCode, String diagnostics) throws Exception {
+  private void completeApplication(
+      FrameworkStatus frameworkStatus, int exitCode, String exitDiagnostics,
+      String triggerMessage, String triggerTaskRoleName, Integer triggerTaskIndex) throws Exception {
     String frameworkName = frameworkStatus.getFrameworkName();
     String applicationId = frameworkStatus.getApplicationId();
 
     LOGGER.logSplittedLines(Level.INFO,
-        "[%s][%s]: completeApplication: ExitCode: %s, ExitDiagnostics: %s",
-        frameworkName, applicationId, exitCode, diagnostics);
+        "[%s][%s]: completeApplication: ExitCode: %s, ExitDiagnostics: %s, " +
+            "TriggerMessage: %s, TriggerTaskRoleName: %s, TriggerTaskIndex: %s",
+        frameworkName, applicationId, exitCode, exitDiagnostics,
+        triggerMessage, triggerTaskRoleName, triggerTaskIndex);
 
     statusManager.transitionFrameworkState(frameworkName, FrameworkState.APPLICATION_COMPLETED,
-        new FrameworkEvent().setApplicationExitCode(exitCode).setApplicationExitDiagnostics(diagnostics));
+        new FrameworkEvent()
+            .setApplicationExitCode(exitCode)
+            .setApplicationExitDiagnostics(exitDiagnostics)
+            .setApplicationExitTriggerMessage(triggerMessage)
+            .setApplicationExitTriggerTaskRoleName(triggerTaskRoleName)
+            .setApplicationExitTriggerTaskIndex(triggerTaskIndex));
     attemptToRetry(frameworkStatus);
   }
 
   // retrieveApplicationExitDiagnostics to prepare completeApplication
-  private void retrieveApplicationExitDiagnostics(String applicationId, Integer exitCode, String diagnostics, boolean needToKill) throws Exception {
+  private void retrieveApplicationExitDiagnostics(
+      String applicationId, Integer exitCode, String exitDiagnostics, boolean needToKill) throws Exception {
     if (needToKill) {
       HadoopUtils.killApplication(applicationId);
     }
 
     String logSuffix = String.format(
         "[%s]: retrieveApplicationExitDiagnostics: ExitCode: %s, ExitDiagnostics: %s, NeedToKill: %s",
-        applicationId, exitCode, diagnostics, needToKill);
+        applicationId, exitCode, exitDiagnostics, needToKill);
 
     if (!statusManager.isApplicationIdAssociated(applicationId)) {
       LOGGER.logWarning("[NotAssociated]%s", logSuffix);
@@ -487,11 +497,23 @@ public class Service extends AbstractService {
     FrameworkStatus frameworkStatus = statusManager.getFrameworkStatusWithAssociatedApplicationId(applicationId);
     String frameworkName = frameworkStatus.getFrameworkName();
 
-    // Schedule to retrieveDiagnostics
+    // Retrieve ExitDiagnostics
     LOGGER.logDebug("[%s]%s", frameworkName, logSuffix);
+
+    // Just used to checkpoint ExitCode and ExitDiagnostics,
+    // the ExitCode can be null and the ExitDiagnostics can be AMDiagnostics.
     statusManager.transitionFrameworkState(frameworkName, FrameworkState.APPLICATION_RETRIEVING_DIAGNOSTICS,
-        new FrameworkEvent().setApplicationExitCode(exitCode).setApplicationExitDiagnostics(diagnostics));
-    diagnosticsRetrieveHandler.retrieveDiagnosticsAsync(applicationId, diagnostics);
+        new FrameworkEvent().setApplicationExitCode(exitCode).setApplicationExitDiagnostics(exitDiagnostics));
+
+    if (exitCode == null || exitCode == FrameworkExitCode.SUCCEEDED.toInt()) {
+      // The exitDiagnostics must be AMDiagnostics.
+      if (AMDiagnostics.equalEmpty(exitDiagnostics)) {
+        amDiagnosticsRetriever.retrieveAsync(applicationId);
+        return;
+      }
+    }
+
+    retrieveApplicationExitCode(applicationId, exitDiagnostics, null);
   }
 
   private void retrieveApplicationExitDiagnostics() throws Exception {
@@ -508,10 +530,11 @@ public class Service extends AbstractService {
   }
 
   // retrieveApplicationExitCode to prepare completeApplication
-  private void retrieveApplicationExitCode(String applicationId, String diagnostics) throws Exception {
+  private void retrieveApplicationExitCode(
+      String applicationId, String exitDiagnostics, Exception exitDiagnosticsRetrieveException) throws Exception {
     String logSuffix = String.format(
         "[%s]: retrieveApplicationExitCode: ExitDiagnostics: %s",
-        applicationId, diagnostics);
+        applicationId, exitDiagnostics);
 
     if (!statusManager.isApplicationIdAssociated(applicationId)) {
       LOGGER.logWarning("[NotAssociated]%s", logSuffix);
@@ -529,14 +552,48 @@ public class Service extends AbstractService {
       return;
     }
 
-    // RetrieveExitCode
+    // Retrieve ExitCode and other exit info
     LOGGER.logDebug("[%s]%s", frameworkName, logSuffix);
-    if (exitCode == null) {
-      ExitStatusKey exitStatusKey = ExitDiagnostics.extractExitStatusKey(diagnostics);
-      exitCode = ExitDiagnostics.lookupExitCode(exitStatusKey);
+
+    String triggerMessage = null;
+    String triggerTaskRoleName = null;
+    Integer triggerTaskIndex = null;
+    if (exitCode == null || exitCode == FrameworkExitCode.SUCCEEDED.toInt()) {
+      // The exitDiagnostics must be AMDiagnostics which contains more exit info from AM.
+      AMDiagnostics amDiagnostics;
+      if (AMDiagnostics.equalEmpty(exitDiagnostics)) {
+        amDiagnostics = AMDiagnostics.generate(
+            FrameworkExitCode.APP_AM_DIAGNOSTICS_LOST.toInt(),
+            String.format(
+                "Cannot get more exit info due to retrieved empty AMDiagnostics: [%s]%s",
+                exitDiagnostics, CommonUtils.toString(exitDiagnosticsRetrieveException)),
+            null, null, null);
+      } else {
+        try {
+          amDiagnostics = AMDiagnostics.deserialize(exitDiagnostics);
+        } catch (Exception e) {
+          amDiagnostics = AMDiagnostics.generate(
+              FrameworkExitCode.APP_AM_DIAGNOSTICS_DESERIALIZATION_FAILED.toInt(),
+              String.format(
+                  "Cannot get more exit info due to failed to deserialize AMDiagnostics: [%s]%s",
+                  exitDiagnostics, CommonUtils.toString(e)),
+              null, null, null);
+        }
+      }
+
+      if (exitCode == null) {
+        // Only override null exitCode
+        exitCode = amDiagnostics.getApplicationExitCode();
+      }
+      exitDiagnostics = amDiagnostics.getApplicationExitDiagnostics();
+      triggerMessage = amDiagnostics.getApplicationExitTriggerMessage();
+      triggerTaskRoleName = amDiagnostics.getApplicationExitTriggerTaskRoleName();
+      triggerTaskIndex = amDiagnostics.getApplicationExitTriggerTaskIndex();
     }
 
-    completeApplication(frameworkStatus, exitCode, diagnostics);
+    completeApplication(
+        frameworkStatus, exitCode, exitDiagnostics,
+        triggerMessage, triggerTaskRoleName, triggerTaskIndex);
   }
 
   private void launchApplication(FrameworkStatus frameworkStatus, ApplicationSubmissionContext applicationContext) throws Exception {
@@ -571,29 +628,28 @@ public class Service extends AbstractService {
       LOGGER.logInfo(logPrefix + "Succeeded");
     } catch (Throwable e) {
       LOGGER.logWarning(e, logPrefix + "Failed");
-      String eMsg = CommonUtils.toString(e);
 
       // YarnException indicates exceptions from yarn servers, and IOException indicates exceptions from RPC layer.
       // So, consider YarnException as NonTransientError, and IOException as TransientError.
       if (e instanceof YarnException) {
         retrieveApplicationExitDiagnostics(
             applicationId,
-            ExitStatusKey.LAUNCHER_SUBMIT_APP_NON_TRANSIENT_ERROR.toInt(),
-            "Failed to submit application due to non-transient error, maybe application is non-compliant." + eMsg,
+            FrameworkExitCode.APP_SUBMISSION_YARN_EXCEPTION.toInt(),
+            CommonUtils.toString(e),
             true);
         return;
       } else if (e instanceof IOException) {
         retrieveApplicationExitDiagnostics(
             applicationId,
-            ExitStatusKey.LAUNCHER_SUBMIT_APP_TRANSIENT_ERROR.toInt(),
-            "Failed to submit application due to transient error, maybe YARN RM is down." + eMsg,
+            FrameworkExitCode.APP_SUBMISSION_IO_EXCEPTION.toInt(),
+            CommonUtils.toString(e),
             true);
         return;
       } else {
         retrieveApplicationExitDiagnostics(
             applicationId,
-            ExitStatusKey.LAUNCHER_SUBMIT_APP_UNKNOWN_ERROR.toInt(),
-            "Failed to submit application due to unknown error." + eMsg,
+            FrameworkExitCode.APP_SUBMISSION_UNKNOWN_EXCEPTION.toInt(),
+            CommonUtils.toString(e),
             true);
         return;
       }
@@ -815,13 +871,13 @@ public class Service extends AbstractService {
         } else if (applicationFinalStatus == FinalApplicationStatus.SUCCEEDED) {
           retrieveApplicationExitDiagnostics(
               applicationId,
-              ExitStatusKey.SUCCEEDED.toInt(),
+              FrameworkExitCode.SUCCEEDED.toInt(),
               diagnostics,
               false);
         } else if (applicationFinalStatus == FinalApplicationStatus.KILLED) {
           retrieveApplicationExitDiagnostics(
               applicationId,
-              ExitStatusKey.AM_KILLED_BY_USER.toInt(),
+              FrameworkExitCode.APP_KILLED_UNEXPECTEDLY.toInt(),
               diagnostics,
               false);
         } else if (applicationFinalStatus == FinalApplicationStatus.FAILED) {
@@ -832,7 +888,7 @@ public class Service extends AbstractService {
               false);
         }
       } else {
-        // Do not kill Application due to AM_RM_RESYNC_EXCEED, since Exceed AM will kill itself.
+        // Do not kill Application due to APP_RM_RESYNC_EXCEEDED, since Exceed AM will kill itself.
         // In this way, we can support multiple LauncherServices to share a single RM,
         // like the sharing of HDFS and ZK.
       }
@@ -857,8 +913,8 @@ public class Service extends AbstractService {
 
         retrieveApplicationExitDiagnostics(
             applicationId,
-            ExitStatusKey.AM_RM_RESYNC_LOST.toInt(),
-            "AM lost after RMResynced",
+            FrameworkExitCode.APP_RM_RESYNC_LOST.toInt(),
+            null,
             false);
       }
     }
@@ -983,17 +1039,11 @@ public class Service extends AbstractService {
   }
 
 
-  // Callbacks from DiagnosticsRetrieveHandler
-  public void onDiagnosticsRetrieved(String applicationId, String diagnostics) {
-    if (ExitDiagnostics.isDiagnosticsEmpty(diagnostics)) {
-      // Can ensure diagnostics is not Empty
-      diagnostics = ExitDiagnostics.generateDiagnostics(
-          ExitStatusKey.LAUNCHER_DIAGNOSTICS_UNRETRIEVABLE);
-    }
-
-    String finalDiagnostics = diagnostics;
+  // Callbacks from AMDiagnosticsRetriever
+  public void onAMDiagnosticsRetrieved(
+      String applicationId, String amDiagnostics, Exception retrieveException) {
     transitionFrameworkStateQueue.queueSystemTask(() -> {
-      retrieveApplicationExitCode(applicationId, finalDiagnostics);
+      retrieveApplicationExitCode(applicationId, amDiagnostics, retrieveException);
     });
   }
 }

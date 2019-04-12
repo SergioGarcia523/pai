@@ -17,8 +17,9 @@
 
 package com.microsoft.frameworklauncher.applicationmaster;
 
+import com.microsoft.frameworklauncher.common.GlobalConstants;
 import com.microsoft.frameworklauncher.common.exceptions.AggregateException;
-import com.microsoft.frameworklauncher.common.exit.ExitStatusKey;
+import com.microsoft.frameworklauncher.common.exit.FrameworkExitCode;
 import com.microsoft.frameworklauncher.common.log.DefaultLogger;
 import com.microsoft.frameworklauncher.common.model.*;
 import com.microsoft.frameworklauncher.common.service.StopStatus;
@@ -90,7 +91,7 @@ public class GangAllocationTest {
     Assert.assertTrue("ApplicationMaster didn't stop",
         signal.getCount() == 0);
     Assert.assertTrue(String.format("Wrong exitCode: %s", exitStatus),
-        exitStatus == ExitStatusKey.CONTAINER_START_FAILED.toInt());
+        exitStatus == GlobalConstants.EXIT_CODE_LAUNCHER_TRANSIENT_FAILED);
   }
 
   private void init() throws Exception {

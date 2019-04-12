@@ -41,7 +41,7 @@ public class CommonUtils {
   }
 
   public static String toString(Throwable e) {
-    return "\nException:\n" + StringUtils.stringifyException(e);
+    return "\nException:\n" + (e != null ? StringUtils.stringifyException(e) : "null");
   }
 
   public static <T> T checkExist(T o) throws NotFoundException {

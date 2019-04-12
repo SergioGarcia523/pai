@@ -17,40 +17,32 @@
 
 package com.microsoft.frameworklauncher.common.model;
 
-import com.microsoft.frameworklauncher.common.GlobalConstants;
-
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
 import java.io.Serializable;
 
-public enum ExitType implements Serializable {
-  // Succeeded
-  SUCCEEDED,
+public class UserContainerExitInfo implements Serializable {
+  @Valid
+  @NotNull
+  private Integer code;
 
-  // Failed, and it can ensure that it will success within a finite retry times:
-  // such as dependent components shutdown, machine error, network error,
-  // configuration error, environment error...
-  TRANSIENT_NORMAL,
+  @Valid
+  @NotNull
+  private ExitType behavior;
 
-  // A special TRANSIENT_NORMAL which indicate the exit due to resource conflict
-  // and cannot get required resource to run.
-  TRANSIENT_CONFLICT,
+  public Integer getCode() {
+    return code;
+  }
 
-  // Failed, and it can ensure that it will fail in every retry times:
-  // such as incorrect usage, input data corruption...
-  NON_TRANSIENT,
+  public void setCode(Integer code) {
+    this.code = code;
+  }
 
-  // Failed, and it cannot offer any retry guarantee.
-  UNKNOWN;
+  public ExitType getBehavior() {
+    return behavior;
+  }
 
-  public int toLauncherExitCode() {
-    if (this == ExitType.SUCCEEDED) {
-      return GlobalConstants.EXIT_CODE_LAUNCHER_SUCCEEDED;
-    } else if (this == ExitType.TRANSIENT_NORMAL ||
-        this == ExitType.TRANSIENT_CONFLICT) {
-      return GlobalConstants.EXIT_CODE_LAUNCHER_TRANSIENT_FAILED;
-    } else if (this == ExitType.NON_TRANSIENT) {
-      return GlobalConstants.EXIT_CODE_LAUNCHER_NON_TRANSIENT_FAILED;
-    } else {
-      return GlobalConstants.EXIT_CODE_LAUNCHER_UNKNOWN_FAILED;
-    }
+  public void setBehavior(ExitType behavior) {
+    this.behavior = behavior;
   }
 }

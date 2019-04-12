@@ -67,4 +67,9 @@ public class GlobalConstants {
   public static final String ENV_VAR_AGENT_BOND_RPC_TIMEOUT_SEC = "AGENT_BOND_RPC_TIMEOUT_SEC";
   public static final String REF_ENV_VAR_LAUNCHER_LOG_DIR = Apps.crossPlatformify(GlobalConstants.ENV_VAR_LAUNCHER_LOG_DIR);
   public static final String LINE = new String(new char[200]).replace("\0", "_");
+  // Predefined ExitCode for Launcher itself exit:
+  public static final int EXIT_CODE_LAUNCHER_SUCCEEDED = 0;
+  public static final int EXIT_CODE_LAUNCHER_UNKNOWN_FAILED = 200;
+  public static final int EXIT_CODE_LAUNCHER_TRANSIENT_FAILED = 201;
+  public static final int EXIT_CODE_LAUNCHER_NON_TRANSIENT_FAILED = 202;
 }
